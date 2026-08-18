@@ -1,7 +1,6 @@
 const USER_ID = "7453114041956172832";
 const USERNAME = "pemplexrl";
 const API = "https://tiktok-api.tokcounter.com/user";
-let lastReturned = null;
 
 const headers = {
   accept: "application/json, text/plain, */*",
@@ -16,6 +15,24 @@ async function fetchJson(url) {
   return r.json();
 }
 
+async function fetchStatsCount(nonce) {
+  const data = await fetchJson(`${API}/stats/${USER_ID}?_=${nonce}`);
+  if (!data?.success) throw new Error("TokCount stats endpoint returned unsuccessful response");
+  const n = Number(data.followerCount);
+  if (!Number.isFinite(n)) throw new Error("TokCount stats endpoint returned an invalid count");
+  return n;
+}
+
+async function fetchSearchFallback(nonce) {
+  const data = await fetchJson(`${API}/search/${encodeURIComponent(USERNAME)}?_=${nonce}`);
+  if (!data?.success) throw new Error("TokCount search endpoint returned unsuccessful response");
+  const users = Array.isArray(data.userData) ? data.userData : [];
+  const exact = users.find(u => String(u?.id || "").toLowerCase() === USERNAME);
+  const n = Number(exact?.stats?.followers);
+  if (!Number.isFinite(n)) throw new Error("TokCount search endpoint returned an invalid count");
+  return n;
+}
+
 export default async function handler(req, res) {
   res.setHeader("Access-Control-Allow-Origin", "*");
   res.setHeader("Cache-Control", "no-store, no-cache, must-revalidate, proxy-revalidate");
@@ -25,52 +42,32 @@ export default async function handler(req, res) {
   if (req.method === "OPTIONS") return res.status(204).end();
   if (req.method !== "GET") return res.status(405).json({ error: "Method not allowed" });
 
+  const nonce = Date.now();
+
   try {
-    const nonce = Date.now();
-    const [statsResult, searchResult] = await Promise.allSettled([
-      fetchJson(`${API}/stats/${USER_ID}?_=${nonce}`),
-      fetchJson(`${API}/search/${encodeURIComponent(USERNAME)}?_=${nonce}`)
-    ]);
-
-    let statsCount = null;
-    let searchCount = null;
-
-    if (statsResult.status === "fulfilled" && statsResult.value?.success) {
-      const n = Number(statsResult.value.followerCount);
-      if (Number.isFinite(n)) statsCount = n;
-    }
-
-    if (searchResult.status === "fulfilled" && searchResult.value?.success) {
-      const users = Array.isArray(searchResult.value.userData) ? searchResult.value.userData : [];
-      const exact = users.find(u => String(u?.id || "").toLowerCase() === USERNAME);
-      const n = Number(exact?.stats?.followers);
-      if (Number.isFinite(n)) searchCount = n;
-    }
-
-    if (statsCount === null && searchCount === null) throw new Error("Both TokCount live endpoints failed");
-
-    let followerCount;
-    if (statsCount !== null && searchCount !== null && statsCount !== searchCount && lastReturned !== null) {
-      // When one TokCount endpoint is still on the old value and the other has already changed,
-      // immediately use the changed one instead of waiting for both caches to catch up.
-      if (statsCount === lastReturned && searchCount !== lastReturned) followerCount = searchCount;
-      else if (searchCount === lastReturned && statsCount !== lastReturned) followerCount = statsCount;
-      else followerCount = statsCount;
-    } else {
-      followerCount = statsCount ?? searchCount;
-    }
-
-    lastReturned = followerCount;
-
+    // Use one authoritative source so two caches can never make the display bounce.
+    const followerCount = await fetchStatsCount(nonce);
     return res.status(200).json({
       username: USERNAME,
       followerCount,
-      statsCount,
-      searchCount,
+      source: "stats",
       updatedAt: new Date().toISOString()
     });
-  } catch (error) {
-    console.error(error);
-    return res.status(502).json({ error: "Could not load the live TikTok follower count right now." });
+  } catch (statsError) {
+    console.error("Primary stats feed failed:", statsError);
+
+    try {
+      // Search is only a fallback when the primary feed is unavailable.
+      const followerCount = await fetchSearchFallback(nonce);
+      return res.status(200).json({
+        username: USERNAME,
+        followerCount,
+        source: "search-fallback",
+        updatedAt: new Date().toISOString()
+      });
+    } catch (fallbackError) {
+      console.error("Fallback search feed failed:", fallbackError);
+      return res.status(502).json({ error: "Could not load the live TikTok follower count right now." });
+    }
   }
 }
