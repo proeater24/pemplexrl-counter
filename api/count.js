@@ -1,41 +1,4 @@
-let cached = {
-  username: null,
-  userId: null,
-  expiresAt: 0
-};
-
-const SEARCH_BASE = "https://tiktok.livecounts.io/user/search";
-const STATS_BASE = "https://tiktok.livecounts.io/user/stats";
-
-async function getJson(url) {
-  const response = await fetch(url, {
-    headers: {
-      "accept": "application/json, text/plain, */*",
-      "user-agent": "Mozilla/5.0 (compatible; pemplexrl-live-counter/1.0)"
-    },
-    cache: "no-store"
-  });
-
-  if (!response.ok) throw new Error(`Upstream returned ${response.status}`);
-  return response.json();
-}
-
-async function resolveUser(username) {
-  const now = Date.now();
-  if (cached.username === username.toLowerCase() && cached.userId && cached.expiresAt > now) return cached.userId;
-
-  const search = await getJson(`${SEARCH_BASE}/${encodeURIComponent(username)}`);
-  const users = Array.isArray(search?.userData) ? search.userData : [];
-  if (!users.length) throw new Error("TikTok user not found");
-
-  const exact = users.find((u) => String(u?.id || "").toLowerCase() === username.toLowerCase());
-  const selected = exact || users[0];
-  const userId = String(selected?.userId || "");
-  if (!userId) throw new Error("No TikTok user ID returned");
-
-  cached = { username: username.toLowerCase(), userId, expiresAt: now + 6 * 60 * 60 * 1000 };
-  return userId;
-}
+const PROFILE_API = "https://pulse.walls.sh/profile";
 
 export default async function handler(req, res) {
   res.setHeader("Access-Control-Allow-Origin", "*");
@@ -48,17 +11,41 @@ export default async function handler(req, res) {
 
   const raw = Array.isArray(req.query.user) ? req.query.user[0] : req.query.user;
   const username = String(raw || "pemplexrl").replace(/^@/, "").trim();
-  if (!/^[A-Za-z0-9._]{2,24}$/.test(username)) return res.status(400).json({ error: "Invalid TikTok username" });
+
+  if (!/^[A-Za-z0-9._]{2,24}$/.test(username)) {
+    return res.status(400).json({ error: "Invalid TikTok username" });
+  }
 
   try {
-    const userId = await resolveUser(username);
-    const stats = await getJson(`${STATS_BASE}/${encodeURIComponent(userId)}`);
-    const followerCount = Number(stats?.followerCount);
-    if (!Number.isFinite(followerCount)) throw new Error("Follower count missing from upstream response");
+    const profileUrl = `https://www.tiktok.com/@${username}`;
+    const upstreamUrl = `${PROFILE_API}?url=${encodeURIComponent(profileUrl)}`;
 
-    res.status(200).json({ username, userId, followerCount, updatedAt: new Date().toISOString() });
+    const response = await fetch(upstreamUrl, {
+      headers: {
+        accept: "application/json",
+        "user-agent": "pemplexrl-live-counter/2.0"
+      },
+      cache: "no-store"
+    });
+
+    if (!response.ok) {
+      throw new Error(`Profile provider returned ${response.status}`);
+    }
+
+    const data = await response.json();
+    const followerCount = Number(data?.followers);
+
+    if (!Number.isFinite(followerCount)) {
+      throw new Error("Follower count missing from profile provider");
+    }
+
+    return res.status(200).json({
+      username,
+      followerCount,
+      updatedAt: data?.fetchedAt || new Date().toISOString()
+    });
   } catch (error) {
     console.error(error);
-    res.status(502).json({ error: "Could not load the live TikTok follower count right now." });
+    return res.status(502).json({ error: "Could not load the live TikTok follower count right now." });
   }
 }
