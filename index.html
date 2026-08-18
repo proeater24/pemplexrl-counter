@@ -1,0 +1,162 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover" />
+  <meta name="color-scheme" content="light" />
+  <title>pemplexrl Follower Count</title>
+  <style>
+    :root {
+      --bg: #fff;
+      --text: #000;
+      --digit-size: clamp(72px, 16vw, 230px);
+      --label-size: clamp(15px, 2.4vw, 32px);
+      --digit-height: 1em;
+      --roll-ms: 650ms;
+    }
+
+    * { box-sizing: border-box; }
+    html, body { margin: 0; width: 100%; height: 100%; overflow: hidden; background: var(--bg); color: var(--text); }
+    body { font-family: Arial, Helvetica, sans-serif; -webkit-font-smoothing: antialiased; text-rendering: geometricPrecision; }
+    .screen { width: 100vw; height: 100vh; min-height: 250px; display: flex; align-items: center; justify-content: center; background: #fff; }
+    .counter-wrap { width: min(96vw, 1600px); display: flex; flex-direction: column; align-items: center; justify-content: center; transform: translateY(-1.5vh); user-select: none; }
+    .number { display: flex; align-items: center; justify-content: center; height: var(--digit-height); font-family: Arial, Helvetica, sans-serif; font-size: var(--digit-size); font-weight: 900; line-height: 1; letter-spacing: -0.055em; font-variant-numeric: tabular-nums lining-nums; white-space: nowrap; color: #000; }
+    .digit { position: relative; display: inline-block; width: 0.58em; height: 1em; overflow: hidden; vertical-align: top; }
+    .digit-track { position: absolute; left: 0; top: 0; width: 100%; height: 2em; will-change: transform; transform: translateY(0); }
+    .digit-value { width: 100%; height: 1em; display: flex; align-items: center; justify-content: center; }
+    .digit.rolling-up .digit-track { animation: rollUp var(--roll-ms) cubic-bezier(.2,.76,.22,1) both; }
+    .digit.rolling-down .digit-track { transform: translateY(-1em); animation: rollDown var(--roll-ms) cubic-bezier(.2,.76,.22,1) both; }
+    @keyframes rollUp { 0% { transform: translateY(0); } 100% { transform: translateY(-1em); } }
+    @keyframes rollDown { 0% { transform: translateY(-1em); } 100% { transform: translateY(0); } }
+    .comma { display: inline-flex; width: 0.26em; height: 1em; align-items: flex-end; justify-content: center; padding-bottom: 0.07em; margin-left: -0.035em; margin-right: 0.035em; }
+    .label { margin-top: clamp(16px, 2.7vh, 36px); font-size: var(--label-size); font-weight: 800; line-height: 1; letter-spacing: 0.18em; padding-left: 0.18em; color: #000; }
+    .status { position: fixed; left: 12px; bottom: 10px; font-size: 10px; font-weight: 700; letter-spacing: .08em; opacity: 0; transition: opacity 180ms ease; pointer-events: none; }
+    .status.show { opacity: .35; }
+    @media (max-aspect-ratio: 3/4) { :root { --digit-size: clamp(60px, 18vw, 155px); --label-size: clamp(14px, 3.6vw, 25px); } }
+    @media (prefers-reduced-motion: reduce) { .digit.rolling-up .digit-track, .digit.rolling-down .digit-track { animation-duration: 1ms; } }
+  </style>
+</head>
+<body>
+  <main class="screen">
+    <section class="counter-wrap" aria-label="TikTok follower counter">
+      <div id="number" class="number" aria-live="polite">—</div>
+      <div class="label">FOLLOWER COUNT</div>
+    </section>
+  </main>
+  <div id="status" class="status">CONNECTING</div>
+  <script>
+    const USERNAME = "pemplexrl";
+    const REFRESH_MS = 5000;
+    const numberEl = document.getElementById("number");
+    const statusEl = document.getElementById("status");
+    let currentCount = null;
+    let busy = false;
+
+    function showStatus(text) { statusEl.textContent = text; statusEl.classList.add("show"); }
+    function hideStatus() { statusEl.classList.remove("show"); }
+    function formatCount(n) { return Math.max(0, Number(n) || 0).toLocaleString("en-GB"); }
+
+    function buildStaticNumber(n) {
+      const text = formatCount(n);
+      numberEl.innerHTML = "";
+      for (const ch of text) {
+        if (ch === ",") {
+          const comma = document.createElement("span");
+          comma.className = "comma";
+          comma.textContent = ",";
+          numberEl.appendChild(comma);
+          continue;
+        }
+        const digit = document.createElement("span");
+        digit.className = "digit";
+        const track = document.createElement("span");
+        track.className = "digit-track";
+        const value = document.createElement("span");
+        value.className = "digit-value";
+        value.textContent = ch;
+        const spare = document.createElement("span");
+        spare.className = "digit-value";
+        spare.textContent = ch;
+        track.append(value, spare);
+        digit.appendChild(track);
+        numberEl.appendChild(digit);
+      }
+    }
+
+    async function animateTo(nextCount) {
+      nextCount = Math.max(0, Math.floor(Number(nextCount)));
+      if (!Number.isFinite(nextCount)) return;
+      if (currentCount === null) { currentCount = nextCount; buildStaticNumber(nextCount); return; }
+      if (nextCount === currentCount) return;
+
+      const oldText = formatCount(currentCount);
+      const newText = formatCount(nextCount);
+      if (oldText.length !== newText.length) {
+        const goingUp = nextCount > currentCount;
+        currentCount = nextCount;
+        buildStaticNumber(nextCount);
+        numberEl.animate([
+          { transform: `translateY(${goingUp ? "0.14em" : "-0.14em"})`, opacity: .35 },
+          { transform: "translateY(0)", opacity: 1 }
+        ], { duration: 520, easing: "cubic-bezier(.2,.76,.22,1)" });
+        return;
+      }
+
+      const goingUp = nextCount > currentCount;
+      const oldChars = [...oldText];
+      const newChars = [...newText];
+      numberEl.innerHTML = "";
+
+      newChars.forEach((newChar, i) => {
+        const oldChar = oldChars[i];
+        if (newChar === ",") {
+          const comma = document.createElement("span");
+          comma.className = "comma";
+          comma.textContent = ",";
+          numberEl.appendChild(comma);
+          return;
+        }
+        const digit = document.createElement("span");
+        digit.className = "digit";
+        const track = document.createElement("span");
+        track.className = "digit-track";
+        const first = document.createElement("span");
+        first.className = "digit-value";
+        const second = document.createElement("span");
+        second.className = "digit-value";
+        if (oldChar !== newChar) {
+          if (goingUp) { first.textContent = oldChar; second.textContent = newChar; digit.classList.add("rolling-up"); }
+          else { first.textContent = newChar; second.textContent = oldChar; digit.classList.add("rolling-down"); }
+        } else { first.textContent = newChar; second.textContent = newChar; }
+        track.append(first, second);
+        digit.appendChild(track);
+        numberEl.appendChild(digit);
+      });
+
+      const committedCount = nextCount;
+      setTimeout(() => { if (currentCount === committedCount) buildStaticNumber(committedCount); }, 690);
+      currentCount = nextCount;
+    }
+
+    async function refresh() {
+      if (busy) return;
+      busy = true;
+      try {
+        const response = await fetch(`/api/count?user=${encodeURIComponent(USERNAME)}&t=${Date.now()}`, { cache: "no-store" });
+        if (!response.ok) throw new Error(`HTTP ${response.status}`);
+        const data = await response.json();
+        if (!Number.isFinite(Number(data.followerCount))) throw new Error("No follower count returned");
+        await animateTo(Number(data.followerCount));
+        hideStatus();
+      } catch (err) {
+        console.error(err);
+        if (currentCount === null) numberEl.textContent = "—";
+        showStatus("RECONNECTING");
+      } finally { busy = false; }
+    }
+
+    refresh();
+    setInterval(refresh, REFRESH_MS);
+  </script>
+</body>
+</html>
