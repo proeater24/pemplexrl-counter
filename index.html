@@ -5,89 +5,123 @@
   <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover" />
   <meta name="color-scheme" content="light" />
   <title>pemplexrl Live Count</title>
+
+  <!-- Livecounts-style odometer engine/theme -->
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/odometer.js/0.4.8/themes/odometer-theme-default.min.css" />
+
   <style>
-    :root { --roll-time: 560ms; --number-size: clamp(76px, 22vw, 250px); }
+    :root { --number-size: clamp(76px, 22vw, 250px); }
     * { box-sizing: border-box; }
     html, body { margin: 0; width: 100%; height: 100%; overflow: hidden; background: #fff; }
     body { font-family: Arial, Helvetica, sans-serif; -webkit-font-smoothing: antialiased; text-rendering: geometricPrecision; }
     .stage { width: 100vw; height: 100vh; display: flex; align-items: center; justify-content: center; background: #fff; }
-    .counter { display: flex; align-items: center; justify-content: center; height: 1em; color: #000; font-family: Arial, Helvetica, sans-serif; font-size: var(--number-size); font-weight: 700; line-height: 1; letter-spacing: -0.045em; font-variant-numeric: tabular-nums lining-nums; white-space: nowrap; user-select: none; }
-    .digit { position: relative; display: inline-block; width: 0.585em; height: 1em; overflow: hidden; vertical-align: top; }
-    .track { position: absolute; inset: 0 0 auto 0; width: 100%; height: 2em; transform: translateY(0); will-change: transform; }
-    .value { display: flex; align-items: center; justify-content: center; width: 100%; height: 1em; }
-    .digit.up .track { animation: rollUp var(--roll-time) cubic-bezier(.16,.78,.22,1) both; }
-    .digit.down .track { transform: translateY(-1em); animation: rollDown var(--roll-time) cubic-bezier(.16,.78,.22,1) both; }
-    @keyframes rollUp { from { transform: translateY(0); } to { transform: translateY(-1em); } }
-    @keyframes rollDown { from { transform: translateY(-1em); } to { transform: translateY(0); } }
-    .comma { display: inline-flex; width: 0.29em; height: 1em; align-items: flex-end; justify-content: center; padding-bottom: 0.055em; margin-left: -0.02em; margin-right: 0.02em; }
-    @media (max-aspect-ratio: 3/4) { :root { --number-size: clamp(70px, 21vw, 170px); } }
-    @media (prefers-reduced-motion: reduce) { .digit.up .track, .digit.down .track { animation-duration: 1ms; } }
-  </style>
-</head>
-<body>
-  <main class="stage"><div id="counter" class="counter" aria-label="TikTok follower count" aria-live="polite">—</div></main>
-  <script>
-    const USERNAME = "pemplexrl";
-    const REFRESH_MS = 1500;
-    const counter = document.getElementById("counter");
-    let currentCount = null;
-    let fetching = false;
-    let animationToken = 0;
-    const format = value => Math.max(0, Math.floor(Number(value) || 0)).toLocaleString("en-GB");
 
-    function renderStatic(value) {
-      const text = format(value);
-      counter.innerHTML = "";
-      for (const char of text) {
-        if (char === ",") {
-          const comma = document.createElement("span"); comma.className = "comma"; comma.textContent = ","; counter.appendChild(comma); continue;
-        }
-        const digit = document.createElement("span"); digit.className = "digit";
-        const track = document.createElement("span"); track.className = "track";
-        const a = document.createElement("span"), b = document.createElement("span"); a.className = b.className = "value"; a.textContent = b.textContent = char;
-        track.append(a, b); digit.appendChild(track); counter.appendChild(digit);
-      }
+    #counter.odometer {
+      color: #000;
+      font-family: Arial, Helvetica, sans-serif !important;
+      font-size: var(--number-size);
+      font-weight: 700;
+      line-height: 1;
+      letter-spacing: -0.045em;
+      font-variant-numeric: tabular-nums lining-nums;
+      white-space: nowrap;
+      user-select: none;
     }
 
-    function rollTo(nextValue) {
-      const next = Math.max(0, Math.floor(Number(nextValue)));
+    #counter.odometer .odometer-inside,
+    #counter.odometer .odometer-digit,
+    #counter.odometer .odometer-digit-spacer,
+    #counter.odometer .odometer-digit-inner,
+    #counter.odometer .odometer-ribbon,
+    #counter.odometer .odometer-ribbon-inner,
+    #counter.odometer .odometer-value,
+    #counter.odometer .odometer-formatting-mark {
+      font-family: Arial, Helvetica, sans-serif !important;
+      font-weight: 700;
+    }
+
+    /* Odometer's official wheel animation is 2 seconds. Keep both directions identical. */
+    #counter.odometer.odometer-animating-up .odometer-ribbon-inner,
+    #counter.odometer.odometer-animating-down .odometer-ribbon-inner {
+      transition-duration: 2s !important;
+      -webkit-transition-duration: 2s !important;
+    }
+
+    @media (max-aspect-ratio: 3/4) {
+      :root { --number-size: clamp(70px, 21vw, 170px); }
+    }
+  </style>
+
+  <script>
+    window.odometerOptions = {
+      auto: false,
+      duration: 2000,
+      format: '(,ddd)',
+      theme: 'default',
+      animation: 'slide'
+    };
+  </script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/odometer.js/0.4.8/odometer.min.js"></script>
+</head>
+<body>
+  <main class="stage">
+    <div id="counter" class="odometer odometer-theme-default" aria-label="TikTok follower count" aria-live="polite">0</div>
+  </main>
+
+  <script>
+    const USERNAME = 'pemplexrl';
+    const REFRESH_MS = 1500;
+    const counterEl = document.getElementById('counter');
+    let odometer = null;
+    let currentCount = null;
+    let fetching = false;
+
+    function ensureOdometer(initialValue) {
+      if (odometer) return odometer;
+      odometer = new Odometer({
+        el: counterEl,
+        value: initialValue,
+        duration: 2000,
+        format: '(,ddd)',
+        theme: 'default',
+        animation: 'slide'
+      });
+      return odometer;
+    }
+
+    function updateCount(value) {
+      const next = Math.max(0, Math.floor(Number(value)));
       if (!Number.isFinite(next)) return;
-      if (currentCount === null) { currentCount = next; renderStatic(next); return; }
-      if (next === currentCount) return;
-      const oldValue = currentCount, oldText = format(oldValue), nextText = format(next), goingUp = next > oldValue;
-      currentCount = next;
-      if (oldText.length !== nextText.length) {
-        renderStatic(next);
-        counter.animate([{ transform: `translateY(${goingUp ? ".12em" : "-.12em"})`, opacity: .35 }, { transform: "translateY(0)", opacity: 1 }], { duration: 500, easing: "cubic-bezier(.16,.78,.22,1)" });
+
+      if (currentCount === null) {
+        currentCount = next;
+        ensureOdometer(next);
         return;
       }
-      counter.innerHTML = "";
-      const oldChars = [...oldText], nextChars = [...nextText], token = ++animationToken;
-      nextChars.forEach((newChar, index) => {
-        const oldChar = oldChars[index];
-        if (newChar === ",") { const comma = document.createElement("span"); comma.className = "comma"; comma.textContent = ","; counter.appendChild(comma); return; }
-        const digit = document.createElement("span"); digit.className = "digit";
-        const track = document.createElement("span"); track.className = "track";
-        const first = document.createElement("span"), second = document.createElement("span"); first.className = second.className = "value";
-        if (newChar !== oldChar) {
-          if (goingUp) { first.textContent = oldChar; second.textContent = newChar; digit.classList.add("up"); }
-          else { first.textContent = newChar; second.textContent = oldChar; digit.classList.add("down"); }
-        } else first.textContent = second.textContent = newChar;
-        track.append(first, second); digit.appendChild(track); counter.appendChild(digit);
-      });
-      setTimeout(() => { if (token === animationToken) renderStatic(currentCount); }, 610);
+
+      if (next === currentCount) return;
+      currentCount = next;
+
+      // This is the same interaction model used by Livecounts: update the
+      // odometer's numeric value and let the wheel engine roll the digits.
+      ensureOdometer(next).update(next);
     }
 
     async function refresh() {
       if (fetching) return;
       fetching = true;
       try {
-        const response = await fetch(`/api/count?user=${encodeURIComponent(USERNAME)}&t=${Date.now()}`, { cache: "no-store" });
+        const response = await fetch(`/api/count?user=${encodeURIComponent(USERNAME)}&t=${Date.now()}`, {
+          cache: 'no-store'
+        });
         if (!response.ok) throw new Error(`Counter API ${response.status}`);
         const data = await response.json();
-        if (Number.isFinite(Number(data.followerCount))) rollTo(Number(data.followerCount));
-      } catch (error) { console.error(error); }
-      finally { fetching = false; }
+        updateCount(data.followerCount);
+      } catch (error) {
+        console.error(error);
+      } finally {
+        fetching = false;
+      }
     }
 
     refresh();
